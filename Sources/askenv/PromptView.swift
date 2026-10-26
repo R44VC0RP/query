@@ -6,8 +6,8 @@ enum Typeface {
     static func mono(_ size: CGFloat) -> Font { .custom("BerkeleyMonoVariable-Regular", size: size) }
 }
 
-/// The one accent: the indigo of the light behind the card.
-let accent = Color(red: 0.52, green: 0.50, blue: 1.0)
+/// The one accent, matching the light behind the card. Set from the palette at launch.
+var accent = Color(red: 0.52, green: 0.50, blue: 1.0)
 
 final class PromptModel: ObservableObject {
     let request: Request
@@ -161,6 +161,7 @@ struct PromptView: View {
                 .textFieldStyle(.plain)
                 .font(Typeface.mono(14))
                 .foregroundStyle(.white)
+                .tint(accent)
                 .focused($focused, equals: name)
                 .onSubmit { advance(from: name) }
 

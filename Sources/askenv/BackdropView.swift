@@ -16,6 +16,9 @@ struct Uniforms {
     float dim;
     float aura;
     float burst;
+    float4 deep;
+    float4 body;
+    float4 highlight;
 };
 
 struct VOut { float4 pos [[position]]; };
@@ -73,11 +76,8 @@ fragment float4 backdrop_fragment(VOut in [[stage_in]], constant Uniforms& u [[b
     float core = exp(-d / 10.0) * 0.35;  // tight light hugging the edge
     float la = clamp((light * 0.42 + core) * u.aura * (1.0 + u.burst * 0.6), 0.0, 0.85);
 
-    float3 deep = float3(0.16, 0.18, 0.62);
-    float3 violet = float3(0.47, 0.30, 0.92);
-    float3 rose = float3(0.90, 0.52, 0.78);
-    float3 color = mix(deep, violet, smoothstep(0.35, 0.7, n));
-    color = mix(color, rose, 0.18 * smoothstep(0.62, 0.85, n));
+    float3 color = mix(u.deep.rgb, u.body.rgb, smoothstep(0.35, 0.7, n));
+    color = mix(color, u.highlight.rgb, 0.18 * smoothstep(0.62, 0.85, n));
 
     // Dim the screen, heavier toward the edges.
     float2 uv = p / u.size - 0.5;
@@ -102,6 +102,9 @@ private struct Uniforms {
     var dim: Float
     var aura: Float
     var burst: Float
+    var deep: SIMD4<Float>
+    var body: SIMD4<Float>
+    var highlight: SIMD4<Float>
 }
 
 /// Full-screen, click-through layer that dims the screen and lets a slow,
@@ -124,8 +127,11 @@ final class BackdropView: MTKView, MTKViewDelegate {
     private let start = CACurrentMediaTime()
     private var lastFrame = CACurrentMediaTime()
 
-    init?(screenFrame: NSRect) {
+    private let palette: Palette
+
+    init?(screenFrame: NSRect, palette: Palette) {
         self.screenFrame = screenFrame
+        self.palette = palette
         guard let device = MTLCreateSystemDefaultDevice() else { return nil }
         super.init(frame: NSRect(origin: .zero, size: screenFrame.size), device: device)
         do {
@@ -188,7 +194,10 @@ final class BackdropView: MTKView, MTKViewDelegate {
             time: Float(now - start),
             dim: dim,
             aura: aura,
-            burst: burst
+            burst: burst,
+            deep: SIMD4(palette.deep, 1),
+            body: SIMD4(palette.body, 1),
+            highlight: SIMD4(palette.highlight, 1)
         )
 
         guard let pass = currentRenderPassDescriptor,

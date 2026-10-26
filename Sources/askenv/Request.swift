@@ -24,6 +24,7 @@ struct Request {
     let reason: String?
     let mode: Mode
     let timeout: TimeInterval?
+    let palette: Palette
 }
 
 let usage = """
@@ -45,6 +46,9 @@ A KEY may carry a hint after a colon:
 Options:
   --reason TEXT       Why the values are needed, shown in the window
   --timeout SECONDS   Give up with exit status 124 if nobody answers
+  --color COLOR       Color of the light: indigo, ember, jade, ocean, rose,
+                      gold, mono, or a hex color such as #ff6a3d.
+                      Defaults to $ASKENV_COLOR, then indigo.
 
 Exit status: 0 provided, 1 cancelled, 2 usage error, 124 timed out.
 For run, the exit status is the command's own.
@@ -78,6 +82,7 @@ func parseArguments(_ arguments: [String]) -> Request {
     var reason: String?
     var format = Format.env
     var timeout: TimeInterval?
+    var colorName = ProcessInfo.processInfo.environment["ASKENV_COLOR"]
     var index = 0
     while index < args.count {
         let arg = args[index]
@@ -93,6 +98,8 @@ func parseArguments(_ arguments: [String]) -> Request {
             let raw = value()
             guard let parsed = Format(rawValue: raw) else { fail("unknown format \(raw)") }
             format = parsed
+        case "--color":
+            colorName = value()
         case "--timeout":
             let raw = value()
             guard let seconds = TimeInterval(raw), seconds > 0 else { fail("invalid timeout \(raw)") }
@@ -133,5 +140,13 @@ func parseArguments(_ arguments: [String]) -> Request {
         return KeySpec(name: name, hint: hint.isEmpty ? nil : hint)
     }
 
-    return Request(keys: keys, reason: reason, mode: mode, timeout: timeout)
+    var palette = Palette.presets["indigo"]!
+    if let colorName, !colorName.isEmpty {
+        guard let chosen = Palette.named(colorName) else {
+            fail("unknown color \"\(colorName)\"; use \(Palette.presetNames.joined(separator: ", ")) or a hex color")
+        }
+        palette = chosen
+    }
+
+    return Request(keys: keys, reason: reason, mode: mode, timeout: timeout, palette: palette)
 }

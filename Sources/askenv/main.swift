@@ -34,6 +34,12 @@ final class PromptPanel: NSPanel {
     }
 }
 
+/// SwiftUI's hosting view keeps window drags for itself; this lets a drag
+/// anywhere on the card except the fields and buttons move the window.
+final class DraggableHostingView<Content: View>: NSHostingView<Content> {
+    override var mouseDownCanMoveWindow: Bool { true }
+}
+
 func roundedMask(radius: CGFloat) -> NSImage {
     let side = radius * 2 + 1
     let image = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
@@ -79,8 +85,9 @@ let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ??
 // The card: glass, a dark tint, and the form.
 let cardRadius: CGFloat = 22
 
+accent = request.palette.accentColor
 let model = PromptModel(request: request)
-let hosting = NSHostingView(rootView: PromptView(model: model, cornerRadius: cardRadius))
+let hosting = DraggableHostingView(rootView: PromptView(model: model, cornerRadius: cardRadius))
 hosting.sizingOptions = [.intrinsicContentSize]
 let cardSize = hosting.fittingSize
 let cardBounds = NSRect(origin: .zero, size: cardSize)
@@ -135,7 +142,7 @@ backdropWindow.ignoresMouseEvents = true
 backdropWindow.level = .statusBar
 backdropWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
 backdropWindow.isReleasedWhenClosed = false
-let backdrop = BackdropView(screenFrame: screen.frame)
+let backdrop = BackdropView(screenFrame: screen.frame, palette: request.palette)
 if let backdrop {
     backdrop.cardRadius = cardRadius
     backdrop.cardFrame = { panel.frame }
