@@ -238,9 +238,28 @@ private struct Well: View {
 /// Behind the content: a press anywhere that is not a field or button
 /// drags the window.
 private struct WindowDragArea: NSViewRepresentable {
+    /// Tracks the drag itself rather than handing it to the window server, so
+    /// the window's frame, and the light that follows it, update every event.
     final class DragView: NSView {
+        private var grab: (mouse: NSPoint, origin: NSPoint)?
+
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-        override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
+
+        override func mouseDown(with event: NSEvent) {
+            guard let window else { return }
+            grab = (NSEvent.mouseLocation, window.frame.origin)
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let window, let grab else { return }
+            let mouse = NSEvent.mouseLocation
+            window.setFrameOrigin(NSPoint(
+                x: grab.origin.x + mouse.x - grab.mouse.x,
+                y: grab.origin.y + mouse.y - grab.mouse.y
+            ))
+        }
+
+        override func mouseUp(with event: NSEvent) { grab = nil }
     }
 
     func makeNSView(context: Context) -> DragView { DragView() }

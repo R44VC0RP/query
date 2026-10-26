@@ -14,9 +14,10 @@ struct Uniforms {
     float time;
     float aura;
     float burst;
-    float pad0;
-    float pad1;
-    float pad2;
+    float motion;     // 0 at rest, 1 when dragged fast
+    float2 world;     // window's top-left in screen points, y down
+    float2 lag;       // how far the light trails the card, points, y down
+    float2 pad;
     float4 deep;
     float4 body;
     float4 highlight;
@@ -64,15 +65,21 @@ fragment float4 aura_fragment(VOut in [[stage_in]], constant Uniforms& u [[buffe
     float2 pt = p / u.scale;
     float t = u.time;
 
-    // Distance from the card's edge, in points.
-    float d = max(sdRoundRect(p - u.size * 0.5, u.cardHalf, u.radius), 0.0) / u.scale;
+    // Distance from the card's edge, in points. Light far from the card
+    // trails behind it when it moves; light at the edge stays attached.
+    float2 c = p - u.size * 0.5;
+    float d0 = max(sdRoundRect(c, u.cardHalf, u.radius), 0.0) / u.scale;
+    float follow = smoothstep(0.0, 140.0, d0);
+    float d = max(sdRoundRect(c - u.lag * u.scale * follow, u.cardHalf, u.radius), 0.0) / u.scale;
 
-    // Slow smoke: domain-warped noise drifting upward.
-    float2 q = pt / 110.0;
-    float2 warp = float2(fbm(q + float2(0.0, t * 0.04)), fbm(q + float2(5.2, -t * 0.03)));
-    float n = fbm(q * 1.3 + warp * 1.6 + float2(t * 0.015, -t * 0.03));
+    // Slow smoke, anchored to the screen so the card moves through it.
+    // Motion stirs it: the warp grows and shifts with the trail.
+    float2 q = (pt + u.world) / 110.0;
+    float2 stir = u.lag / 160.0;
+    float2 warp = float2(fbm(q + float2(0.0, t * 0.04) + stir), fbm(q + float2(5.2, -t * 0.03) - stir));
+    float n = fbm(q * 1.3 + warp * (1.6 + u.motion * 1.2) + float2(t * 0.015, -t * 0.03));
 
-    float spread = 80.0 * (0.8 + 0.4 * n) * (1.0 + u.burst * 0.5);
+    float spread = 80.0 * (0.8 + 0.4 * n) * (1.0 + u.burst * 0.5 + u.motion * 0.35);
     float light = exp(-d / spread) * (0.55 + 0.45 * n);
     float core = exp(-d / 10.0) * 0.35;  // tight light hugging the edge
 
@@ -80,7 +87,7 @@ fragment float4 aura_fragment(VOut in [[stage_in]], constant Uniforms& u [[buffe
     float2 edge = min(p, u.size - p) / u.scale;
     float fade = smoothstep(0.0, 90.0, min(edge.x, edge.y));
 
-    float la = clamp((light * 0.42 + core) * u.aura * (1.0 + u.burst * 0.6) * fade, 0.0, 0.85);
+    float la = clamp((light * 0.42 + core) * u.aura * (1.0 + u.burst * 0.6 + u.motion * 0.5) * fade, 0.0, 0.85);
 
     float3 color = mix(u.deep.rgb, u.body.rgb, smoothstep(0.35, 0.7, n));
     color = mix(color, u.highlight.rgb, 0.18 * smoothstep(0.62, 0.85, n));
@@ -99,9 +106,10 @@ private struct Uniforms {
     var time: Float
     var aura: Float
     var burst: Float
-    var pad0: Float = 0
-    var pad1: Float = 0
-    var pad2: Float = 0
+    var motion: Float
+    var world: SIMD2<Float>
+    var lag: SIMD2<Float>
+    var pad: SIMD2<Float> = .zero
     var deep: SIMD4<Float>
     var body: SIMD4<Float>
     var highlight: SIMD4<Float>
@@ -117,6 +125,11 @@ final class AuraView: MTKView, MTKViewDelegate {
     private let palette: Palette
     private var aura: Float = 0
     private var burst: Float = 0
+    private var motion: Float = 0
+    /// Where the light is, chasing the card on a spring (screen points, y up).
+    private var lightPosition: SIMD2<Float>?
+    private var lightVelocity: SIMD2<Float> = .zero
+    private var lastCardPosition: SIMD2<Float>?
     private var pipeline: MTLRenderPipelineState!
     private var queue: MTLCommandQueue!
     private let start = CACurrentMediaTime()
@@ -164,6 +177,38 @@ final class AuraView: MTKView, MTKViewDelegate {
         aura += (targetAura - aura) * (1 - exp(-dt * 2.5))
         burst *= exp(-dt * 2)
 
+        // The light chases the card on a slightly underdamped spring, so it
+        // trails a drag and settles with a small overshoot when the card stops.
+        var lag = SIMD2<Float>.zero
+        if let frame = window?.frame, dt > 0 {
+            let card = SIMD2(Float(frame.midX), Float(frame.midY))
+            var light = lightPosition ?? card
+            let stiffness: Float = 90
+            let damping: Float = 13
+            var step: Float = 0
+            while step < dt {
+                let h = min(1 / 240, dt - step)
+                let force = (card - light) * stiffness - lightVelocity * damping
+                lightVelocity += force * h
+                light += lightVelocity * h
+                step += h
+            }
+            lightPosition = light
+            var offset = light - card
+            let length = (offset * offset).sum().squareRoot()
+            if length > 140 { offset *= 140 / length }
+            lag = SIMD2(offset.x, -offset.y)
+
+            let previous = lastCardPosition ?? card
+            let delta = card - previous
+            let speed = (delta * delta).sum().squareRoot() / dt
+            lastCardPosition = card
+            motion += (min(speed / 1600, 1) - motion) * (1 - exp(-dt * (speed > 0 ? 10 : 3)))
+        }
+        let screenTop = Float(window?.screen?.frame.maxY ?? 0)
+        let frame = window?.frame ?? .zero
+        let world = SIMD2(Float(frame.minX), screenTop - Float(frame.maxY))
+
         let scale = Float(drawableSize.width / max(bounds.width, 1))
         var uniforms = Uniforms(
             size: SIMD2(Float(drawableSize.width), Float(drawableSize.height)),
@@ -173,6 +218,9 @@ final class AuraView: MTKView, MTKViewDelegate {
             time: Float(now - start),
             aura: aura,
             burst: burst,
+            motion: motion,
+            world: world,
+            lag: lag,
             deep: SIMD4(palette.deep, 1),
             body: SIMD4(palette.body, 1),
             highlight: SIMD4(palette.highlight, 1)
