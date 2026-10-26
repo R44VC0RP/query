@@ -7,15 +7,16 @@ private let shaderSource = """
 using namespace metal;
 
 struct Uniforms {
-    float2 size;        // drawable, pixels
-    float2 cardCenter;  // pixels, origin top-left
-    float2 cardHalf;    // pixels
-    float radius;       // pixels
-    float scale;        // pixels per point
+    float2 size;      // drawable, pixels
+    float2 cardHalf;  // pixels; the card is centered
+    float radius;     // pixels
+    float scale;      // pixels per point
     float time;
-    float dim;
     float aura;
     float burst;
+    float pad0;
+    float pad1;
+    float pad2;
     float4 deep;
     float4 body;
     float4 highlight;
@@ -23,7 +24,7 @@ struct Uniforms {
 
 struct VOut { float4 pos [[position]]; };
 
-vertex VOut backdrop_vertex(uint vid [[vertex_id]]) {
+vertex VOut aura_vertex(uint vid [[vertex_id]]) {
     float2 p[3] = { float2(-1, -1), float2(3, -1), float2(-1, 3) };
     VOut o;
     o.pos = float4(p[vid], 0, 1);
@@ -45,7 +46,7 @@ float noise(float2 p) {
 float fbm(float2 p) {
     float v = 0.0;
     float a = 0.5;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 4; i++) {
         v += a * noise(p);
         p = p * 2.03 + float2(1.7, 9.2);
         a *= 0.5;
@@ -58,13 +59,13 @@ float sdRoundRect(float2 p, float2 b, float r) {
     return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
-fragment float4 backdrop_fragment(VOut in [[stage_in]], constant Uniforms& u [[buffer(0)]]) {
+fragment float4 aura_fragment(VOut in [[stage_in]], constant Uniforms& u [[buffer(0)]]) {
     float2 p = in.pos.xy;
     float2 pt = p / u.scale;
     float t = u.time;
 
     // Distance from the card's edge, in points.
-    float d = max(sdRoundRect(p - u.cardCenter, u.cardHalf, u.radius), 0.0) / u.scale;
+    float d = max(sdRoundRect(p - u.size * 0.5, u.cardHalf, u.radius), 0.0) / u.scale;
 
     // Slow smoke: domain-warped noise drifting upward.
     float2 q = pt / 110.0;
@@ -74,52 +75,46 @@ fragment float4 backdrop_fragment(VOut in [[stage_in]], constant Uniforms& u [[b
     float spread = 80.0 * (0.8 + 0.4 * n) * (1.0 + u.burst * 0.5);
     float light = exp(-d / spread) * (0.55 + 0.45 * n);
     float core = exp(-d / 10.0) * 0.35;  // tight light hugging the edge
-    float la = clamp((light * 0.42 + core) * u.aura * (1.0 + u.burst * 0.6), 0.0, 0.85);
+
+    // Fade out before the window's edges so they never show.
+    float2 edge = min(p, u.size - p) / u.scale;
+    float fade = smoothstep(0.0, 90.0, min(edge.x, edge.y));
+
+    float la = clamp((light * 0.42 + core) * u.aura * (1.0 + u.burst * 0.6) * fade, 0.0, 0.85);
 
     float3 color = mix(u.deep.rgb, u.body.rgb, smoothstep(0.35, 0.7, n));
     color = mix(color, u.highlight.rgb, 0.18 * smoothstep(0.62, 0.85, n));
 
-    // Dim the screen, heavier toward the edges.
-    float2 uv = p / u.size - 0.5;
-    float vignette = smoothstep(0.15, 0.85, length(uv * float2(1.0, 1.15)));
-    float dimA = u.dim * (0.16 + 0.26 * vignette);
-
-    float a = dimA * (1.0 - la) + la;
-    float3 rgb = color * la;
     // Dither against banding in the soft gradients.
     float grain = (hash(p + fract(t) * 91.0) - 0.5) / 255.0;
-    return float4(max(rgb + grain, 0.0), a);
+    return float4(max(color * la + grain * la, 0.0), la);
 }
 """
 
 private struct Uniforms {
     var size: SIMD2<Float>
-    var cardCenter: SIMD2<Float>
     var cardHalf: SIMD2<Float>
     var radius: Float
     var scale: Float
     var time: Float
-    var dim: Float
     var aura: Float
     var burst: Float
+    var pad0: Float = 0
+    var pad1: Float = 0
+    var pad2: Float = 0
     var deep: SIMD4<Float>
     var body: SIMD4<Float>
     var highlight: SIMD4<Float>
 }
 
-/// Full-screen, click-through layer that dims the screen and lets a slow,
-/// smoky light spill out from behind the card.
-final class BackdropView: MTKView, MTKViewDelegate {
-    /// The card's frame in screen coordinates, read every frame so the light
-    /// follows the card when it is dragged.
-    var cardFrame: () -> NSRect = { .zero }
-    var cardRadius: CGFloat = 22
-    var screenFrame: NSRect = .zero
-
-    var targetDim: Float = 0
+/// Slow, smoky light that spills out from behind a card centered in the view.
+/// It lives in a child window of the card, so it moves with the card exactly.
+final class AuraView: MTKView, MTKViewDelegate {
     var targetAura: Float = 0
 
-    private var dim: Float = 0
+    private let cardSize: CGSize
+    private let cardRadius: CGFloat
+    private let palette: Palette
     private var aura: Float = 0
     private var burst: Float = 0
     private var pipeline: MTLRenderPipelineState!
@@ -127,40 +122,31 @@ final class BackdropView: MTKView, MTKViewDelegate {
     private let start = CACurrentMediaTime()
     private var lastFrame = CACurrentMediaTime()
 
-    private let palette: Palette
-
-    init?(screenFrame: NSRect, palette: Palette) {
-        self.screenFrame = screenFrame
-        self.palette = palette
+    init?(size: CGSize, cardSize: CGSize, cardRadius: CGFloat, palette: Palette) {
         guard let device = MTLCreateSystemDefaultDevice() else { return nil }
-        super.init(frame: NSRect(origin: .zero, size: screenFrame.size), device: device)
+        self.cardSize = cardSize
+        self.cardRadius = cardRadius
+        self.palette = palette
+        super.init(frame: NSRect(origin: .zero, size: size), device: device)
         do {
             let library = try device.makeLibrary(source: shaderSource, options: nil)
             let descriptor = MTLRenderPipelineDescriptor()
-            descriptor.vertexFunction = library.makeFunction(name: "backdrop_vertex")
-            descriptor.fragmentFunction = library.makeFunction(name: "backdrop_fragment")
+            descriptor.vertexFunction = library.makeFunction(name: "aura_vertex")
+            descriptor.fragmentFunction = library.makeFunction(name: "aura_fragment")
             descriptor.colorAttachments[0].pixelFormat = colorPixelFormat
             pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         } catch {
-            FileHandle.standardError.write(Data("askenv: backdrop shader failed: \(error)\n".utf8))
+            FileHandle.standardError.write(Data("askenv: aura shader failed: \(error)\n".utf8))
             return nil
         }
         queue = device.makeCommandQueue()
         clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
         layer?.isOpaque = false
-        // Everything here is soft, so render at one pixel per point.
-        autoResizeDrawable = false
-        drawableSize = screenFrame.size
-        preferredFramesPerSecond = 60
+        preferredFramesPerSecond = 120
         delegate = self
     }
 
     required init(coder: NSCoder) { fatalError("init(coder:) is not supported") }
-
-    override func setFrameSize(_ newSize: NSSize) {
-        super.setFrameSize(newSize)
-        drawableSize = newSize
-    }
 
     /// A brief swell of light.
     func kick(_ amount: Float) {
@@ -175,24 +161,16 @@ final class BackdropView: MTKView, MTKViewDelegate {
         let now = CACurrentMediaTime()
         let dt = Float(min(now - lastFrame, 0.1))
         lastFrame = now
-        dim += (targetDim - dim) * (1 - exp(-dt * 4))
         aura += (targetAura - aura) * (1 - exp(-dt * 2.5))
         burst *= exp(-dt * 2)
 
         let scale = Float(drawableSize.width / max(bounds.width, 1))
-        let card = cardFrame()
-        let center = SIMD2<Float>(
-            Float(card.midX - screenFrame.minX) * scale,
-            Float(screenFrame.maxY - card.midY) * scale
-        )
         var uniforms = Uniforms(
             size: SIMD2(Float(drawableSize.width), Float(drawableSize.height)),
-            cardCenter: center,
-            cardHalf: SIMD2(Float(card.width / 2), Float(card.height / 2)) * scale,
+            cardHalf: SIMD2(Float(cardSize.width / 2), Float(cardSize.height / 2)) * scale,
             radius: Float(cardRadius) * scale,
             scale: scale,
             time: Float(now - start),
-            dim: dim,
             aura: aura,
             burst: burst,
             deep: SIMD4(palette.deep, 1),

@@ -106,6 +106,7 @@ struct PromptView: View {
         .padding(.horizontal, 20)
         .padding(.top, 18)
         .padding(.bottom, 22)
+        .background(WindowDragArea())
         .background(
             // Light falls from above: a faint lift at the top of the glass.
             LinearGradient(colors: [.white.opacity(0.045), .clear], startPoint: .top, endPoint: .center)
@@ -232,6 +233,18 @@ private struct Well: View {
             )
             .shadow(color: accent.opacity(active ? 0.28 : 0), radius: 10)
     }
+}
+
+/// Behind the content: a press anywhere that is not a field or button
+/// drags the window.
+private struct WindowDragArea: NSViewRepresentable {
+    final class DragView: NSView {
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
+    }
+
+    func makeNSView(context: Context) -> DragView { DragView() }
+    func updateNSView(_ nsView: DragView, context: Context) {}
 }
 
 /// A small light that breathes while the prompt waits.

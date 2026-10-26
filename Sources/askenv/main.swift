@@ -34,10 +34,9 @@ final class PromptPanel: NSPanel {
     }
 }
 
-/// SwiftUI's hosting view keeps window drags for itself; this lets a drag
-/// anywhere on the card except the fields and buttons move the window.
+/// askenv is never the active app, so the first click must count.
 final class DraggableHostingView<Content: View>: NSHostingView<Content> {
-    override var mouseDownCanMoveWindow: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
 func roundedMask(radius: CGFloat) -> NSImage {
@@ -102,7 +101,6 @@ panel.isOpaque = false
 panel.backgroundColor = .clear
 panel.hasShadow = true
 panel.appearance = NSAppearance(named: .darkAqua)
-panel.isMovableByWindowBackground = true
 panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
 panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 panel.hidesOnDeactivate = false
@@ -133,20 +131,49 @@ let restingOrigin = NSPoint(
     y: visible.maxY - visible.height * 0.24 - cardSize.height
 )
 
-// Behind the card: the screen dims and light spills out from under the glass.
-let backdropWindow = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-backdropWindow.isOpaque = false
-backdropWindow.backgroundColor = .clear
-backdropWindow.hasShadow = false
-backdropWindow.ignoresMouseEvents = true
-backdropWindow.level = .statusBar
-backdropWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-backdropWindow.isReleasedWhenClosed = false
-let backdrop = BackdropView(screenFrame: screen.frame, palette: request.palette)
-if let backdrop {
-    backdrop.cardRadius = cardRadius
-    backdrop.cardFrame = { panel.frame }
-    backdropWindow.contentView = backdrop
+// The screen dims, heavier toward its edges. Static, so it costs nothing per frame.
+let dimWindow = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+dimWindow.isOpaque = false
+dimWindow.backgroundColor = .clear
+dimWindow.hasShadow = false
+dimWindow.ignoresMouseEvents = true
+dimWindow.level = .statusBar
+dimWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+dimWindow.isReleasedWhenClosed = false
+let dimView = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
+dimView.wantsLayer = true
+let vignette = CAGradientLayer()
+vignette.type = .radial
+vignette.colors = [
+    NSColor.black.withAlphaComponent(0.16).cgColor,
+    NSColor.black.withAlphaComponent(0.2).cgColor,
+    NSColor.black.withAlphaComponent(0.42).cgColor,
+]
+vignette.locations = [0, 0.35, 1]
+vignette.startPoint = CGPoint(x: 0.5, y: 0.5)
+vignette.endPoint = CGPoint(x: 1.1, y: 1.1)
+vignette.frame = dimView.bounds
+dimView.layer?.addSublayer(vignette)
+dimWindow.contentView = dimView
+
+// Light spills out from under the glass. A child window of the card, so the
+// window server moves both together when the card is dragged.
+let auraMargin: CGFloat = 200
+let auraSize = NSSize(width: cardSize.width + auraMargin * 2, height: cardSize.height + auraMargin * 2)
+let auraWindow = NSWindow(contentRect: NSRect(origin: .zero, size: auraSize), styleMask: .borderless, backing: .buffered, defer: false)
+auraWindow.isOpaque = false
+auraWindow.backgroundColor = .clear
+auraWindow.hasShadow = false
+auraWindow.ignoresMouseEvents = true
+auraWindow.level = panel.level
+auraWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+auraWindow.isReleasedWhenClosed = false
+let backdrop = AuraView(size: auraSize, cardSize: cardSize, cardRadius: cardRadius, palette: request.palette)
+if let backdrop { auraWindow.contentView = backdrop }
+
+func placeAura() {
+    let card = panel.frame
+    auraWindow.setFrameOrigin(NSPoint(x: card.minX - auraMargin, y: card.minY - auraMargin))
 }
 
 // Typing stirs the light a little.
@@ -155,17 +182,16 @@ model.onType = { backdrop?.kick(0.05) }
 func dismiss(submitted: Bool, then action: @escaping () -> Never) {
     let duration = submitted ? 0.4 : 0.22
     backdrop?.targetAura = 0
-    backdrop?.targetDim = 0
     if submitted {
         backdrop?.kick(0.5)
         haptic()
     }
     let origin = panel.frame.origin
     glide(panel, to: NSPoint(x: origin.x, y: origin.y - (submitted ? 8 : 4)), alpha: 0, duration: duration)
-    fade(backdropWindow, to: 0, duration: duration + 0.15)
+    fade(dimWindow, to: 0, duration: duration + 0.15)
     DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.15) {
         panel.orderOut(nil)
-        backdropWindow.orderOut(nil)
+        dimWindow.orderOut(nil)
         action()
     }
 }
@@ -199,12 +225,14 @@ if let timeout = request.timeout {
 }
 
 // Entrance: the screen dims and the light gathers, then the card rises into it.
-backdropWindow.alphaValue = 1
+dimWindow.alphaValue = 0
 panel.alphaValue = 0
 panel.setFrameOrigin(NSPoint(x: restingOrigin.x, y: restingOrigin.y - 14))
-backdropWindow.orderFrontRegardless()
+dimWindow.orderFrontRegardless()
 panel.makeKeyAndOrderFront(nil)
-backdrop?.targetDim = 1
+placeAura()
+panel.addChildWindow(auraWindow, ordered: .below)
+fade(dimWindow, to: 1, duration: 0.5)
 backdrop?.targetAura = 1
 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
     glide(panel, to: restingOrigin, alpha: 1, duration: 0.55)
