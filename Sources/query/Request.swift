@@ -28,27 +28,27 @@ struct Request {
 }
 
 let usage = """
-askenv: ask a person for environment values in a floating window
+query: ask a person for environment values in a floating window
 
-  askenv run KEY... [options] -- COMMAND [ARGS...]
+  query run KEY... [options] -- COMMAND [ARGS...]
       Run COMMAND with the values set as environment variables.
       The values never reach stdout. Use this from agents.
 
-  askenv write FILE KEY... [options]
+  query write FILE KEY... [options]
       Merge the values into a dotenv FILE (written with mode 0600).
 
-  askenv get KEY... [options] [--format env|export|json]
+  query get KEY... [options] [--format env|export|json]
       Print the values to stdout. Whoever reads stdout sees them.
 
 A KEY may carry a hint after a colon:
-  askenv run "STRIPE_KEY:Restricted key, test mode" -- npm test
+  query run "STRIPE_KEY:Restricted key, test mode" -- npm test
 
 Options:
   --reason TEXT       Why the values are needed, shown in the window
   --timeout SECONDS   Give up with exit status 124 if nobody answers
   --color COLOR       Color of the light: indigo, ember, jade, ocean, rose,
                       gold, mono, or a hex color such as #ff6a3d.
-                      Defaults to $ASKENV_COLOR, then indigo.
+                      Defaults to $QUERY_COLOR, then indigo.
 
 Exit status: 0 provided, 1 cancelled, 2 usage error, 124 timed out.
 For run, the exit status is the command's own.
@@ -56,7 +56,7 @@ For run, the exit status is the command's own.
 """
 
 func fail(_ message: String) -> Never {
-    FileHandle.standardError.write(Data("askenv: \(message)\n".utf8))
+    FileHandle.standardError.write(Data("query: \(message)\n".utf8))
     exit(2)
 }
 
@@ -82,7 +82,7 @@ func parseArguments(_ arguments: [String]) -> Request {
     var reason: String?
     var format = Format.env
     var timeout: TimeInterval?
-    var colorName = ProcessInfo.processInfo.environment["ASKENV_COLOR"]
+    var colorName = ProcessInfo.processInfo.environment["QUERY_COLOR"]
     var index = 0
     while index < args.count {
         let arg = args[index]

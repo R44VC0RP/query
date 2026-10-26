@@ -64,7 +64,7 @@ func mergeDotenv(_ values: [(String, String)], into path: String) throws {
     let contents = Data((lines.joined(separator: "\n") + "\n").utf8)
 
     let temporary = url.deletingLastPathComponent()
-        .appendingPathComponent(".\(url.lastPathComponent).askenv-\(getpid())").path
+        .appendingPathComponent(".\(url.lastPathComponent).query-\(getpid())").path
     let descriptor = open(temporary, O_WRONLY | O_CREAT | O_EXCL, 0o600)
     guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
     let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
@@ -93,11 +93,11 @@ func deliver(_ values: [(String, String)], for request: Request) -> Never {
         do {
             try mergeDotenv(values, into: path)
         } catch {
-            FileHandle.standardError.write(Data("askenv: could not write \(path): \(error.localizedDescription)\n".utf8))
+            FileHandle.standardError.write(Data("query: could not write \(path): \(error.localizedDescription)\n".utf8))
             exit(1)
         }
         let names = values.map(\.0).joined(separator: ", ")
-        FileHandle.standardError.write(Data("askenv: wrote \(names) to \(path)\n".utf8))
+        FileHandle.standardError.write(Data("query: wrote \(names) to \(path)\n".utf8))
         exit(0)
 
     case .run(let command):
@@ -106,7 +106,7 @@ func deliver(_ values: [(String, String)], for request: Request) -> Never {
         argv.append(nil)
         execvp(command[0], argv)
         let message = String(cString: strerror(errno))
-        FileHandle.standardError.write(Data("askenv: \(command[0]): \(message)\n".utf8))
+        FileHandle.standardError.write(Data("query: \(command[0]): \(message)\n".utf8))
         exit(127)
     }
 }

@@ -2,9 +2,9 @@
 import PackageDescription
 
 let package = Package(
-    name: "askenv",
+    name: "query",
     platforms: [.macOS(.v14)],
     targets: [
-        .executableTarget(name: "askenv")
+        .executableTarget(name: "query")
     ]
 )

@@ -149,7 +149,7 @@ final class AuraView: MTKView, MTKViewDelegate {
             descriptor.colorAttachments[0].pixelFormat = colorPixelFormat
             pipeline = try device.makeRenderPipelineState(descriptor: descriptor)
         } catch {
-            FileHandle.standardError.write(Data("askenv: aura shader failed: \(error)\n".utf8))
+            FileHandle.standardError.write(Data("query: aura shader failed: \(error)\n".utf8))
             return nil
         }
         queue = device.makeCommandQueue()

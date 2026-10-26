@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// A panel that takes keyboard focus without activating askenv, so the
+/// A panel that takes keyboard focus without activating query, so the
 /// app the person was using stays frontmost, like Spotlight.
 final class PromptPanel: NSPanel {
     var onCancel: (() -> Void)?
@@ -34,7 +34,7 @@ final class PromptPanel: NSPanel {
     }
 }
 
-/// askenv is never the active app, so the first click must count.
+/// query is never the active app, so the first click must count.
 final class DraggableHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
@@ -199,7 +199,7 @@ func dismiss(submitted: Bool, then action: @escaping () -> Never) {
 model.onFinish = { values in
     guard let values else {
         dismiss(submitted: false) {
-            FileHandle.standardError.write(Data("askenv: cancelled\n".utf8))
+            FileHandle.standardError.write(Data("query: cancelled\n".utf8))
             exit(1)
         }
         return
@@ -218,7 +218,7 @@ NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
 if let timeout = request.timeout {
     DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
         dismiss(submitted: false) {
-            FileHandle.standardError.write(Data("askenv: timed out after \(Int(timeout))s\n".utf8))
+            FileHandle.standardError.write(Data("query: timed out after \(Int(timeout))s\n".utf8))
             exit(124)
         }
     }
