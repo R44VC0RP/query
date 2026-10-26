@@ -54,6 +54,20 @@ func fade(_ window: NSWindow, to alpha: CGFloat, duration: TimeInterval) {
     }
 }
 
+/// Moves and fades a window together, with a curve that settles gently.
+func glide(_ window: NSWindow, to origin: NSPoint, alpha: CGFloat, duration: TimeInterval) {
+    NSAnimationContext.runAnimationGroup { context in
+        context.duration = duration
+        context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.25, 1)
+        window.animator().setFrameOrigin(origin)
+        window.animator().alphaValue = alpha
+    }
+}
+
+func haptic() {
+    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+}
+
 let request = parseArguments(Array(CommandLine.arguments.dropFirst()))
 
 let app = NSApplication.shared
@@ -62,41 +76,24 @@ app.setActivationPolicy(.accessory)
 let mouse = NSEvent.mouseLocation
 let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main!
 
-// Screen edges: a click-through window that glows inward from the edges.
-let edgeWindow = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-edgeWindow.isOpaque = false
-edgeWindow.backgroundColor = .clear
-edgeWindow.hasShadow = false
-edgeWindow.ignoresMouseEvents = true
-edgeWindow.level = .statusBar
-edgeWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-edgeWindow.isReleasedWhenClosed = false
-let edgeGlow = GlowView(style: .edge, glowWidth: 48)
-if let edgeGlow {
-    edgeGlow.preferredFramesPerSecond = 60
-    edgeWindow.contentView = edgeGlow
-}
-
-// The card: glass, the form, and a glowing ring drawn over its edge.
+// The card: glass, a dark tint, and the form.
 let cardRadius: CGFloat = 22
-let margin: CGFloat = 90
 
 let model = PromptModel(request: request)
-let hosting = NSHostingView(rootView: PromptView(model: model))
+let hosting = NSHostingView(rootView: PromptView(model: model, cornerRadius: cardRadius))
 hosting.sizingOptions = [.intrinsicContentSize]
 let cardSize = hosting.fittingSize
-let panelSize = NSSize(width: cardSize.width + margin * 2, height: cardSize.height + margin * 2)
-let cardFrame = NSRect(x: margin, y: margin, width: cardSize.width, height: cardSize.height)
+let cardBounds = NSRect(origin: .zero, size: cardSize)
 
 let panel = PromptPanel(
-    contentRect: NSRect(origin: .zero, size: panelSize),
+    contentRect: cardBounds,
     styleMask: [.borderless, .nonactivatingPanel],
     backing: .buffered,
     defer: false
 )
 panel.isOpaque = false
 panel.backgroundColor = .clear
-panel.hasShadow = false
+panel.hasShadow = true
 panel.appearance = NSAppearance(named: .darkAqua)
 panel.isMovableByWindowBackground = true
 panel.level = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
@@ -104,91 +101,108 @@ panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 panel.hidesOnDeactivate = false
 panel.isReleasedWhenClosed = false
 
-let root = NSView(frame: NSRect(origin: .zero, size: panelSize))
-let glass = NSVisualEffectView(frame: cardFrame)
+let root = NSView(frame: cardBounds)
+let glass = NSVisualEffectView(frame: cardBounds)
 glass.material = .hudWindow
 glass.blendingMode = .behindWindow
 glass.state = .active
 glass.maskImage = roundedMask(radius: cardRadius)
 root.addSubview(glass)
 
-let tint = NSView(frame: cardFrame)
+let tint = NSView(frame: cardBounds)
 tint.wantsLayer = true
-tint.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.5).cgColor
+tint.layer?.backgroundColor = NSColor(red: 0.03, green: 0.03, blue: 0.06, alpha: 0.62).cgColor
 tint.layer?.cornerRadius = cardRadius
 tint.layer?.cornerCurve = .continuous
 root.addSubview(tint)
 
-hosting.frame = cardFrame
+hosting.frame = cardBounds
 root.addSubview(hosting)
-
-let ringGlow = GlowView(style: .ring(inset: margin, cornerRadius: cardRadius), glowWidth: 26)
-if let ringGlow {
-    ringGlow.frame = root.bounds
-    root.addSubview(ringGlow)
-}
 panel.contentView = root
 
 let visible = screen.visibleFrame
-panel.setFrameOrigin(NSPoint(
-    x: visible.midX - panelSize.width / 2,
-    y: visible.maxY - visible.height * 0.18 - panelSize.height + margin
-))
+let restingOrigin = NSPoint(
+    x: visible.midX - cardSize.width / 2,
+    y: visible.maxY - visible.height * 0.24 - cardSize.height
+)
 
-// Typing makes the light swell a little.
-model.onType = {
-    ringGlow?.kick(0.18)
-    edgeGlow?.kick(0.08)
+// Behind the card: the screen dims and light spills out from under the glass.
+let backdropWindow = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+backdropWindow.isOpaque = false
+backdropWindow.backgroundColor = .clear
+backdropWindow.hasShadow = false
+backdropWindow.ignoresMouseEvents = true
+backdropWindow.level = .statusBar
+backdropWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+backdropWindow.isReleasedWhenClosed = false
+let backdrop = BackdropView(screenFrame: screen.frame)
+if let backdrop {
+    backdrop.cardRadius = cardRadius
+    backdrop.cardFrame = { panel.frame }
+    backdropWindow.contentView = backdrop
 }
 
-func dismiss(after delay: TimeInterval, then action: @escaping () -> Never) {
-    ringGlow?.targetIntensity = 0
-    edgeGlow?.targetIntensity = 0
-    fade(panel, to: 0, duration: delay)
-    fade(edgeWindow, to: 0, duration: delay)
-    DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+// Typing stirs the light a little.
+model.onType = { backdrop?.kick(0.05) }
+
+func dismiss(submitted: Bool, then action: @escaping () -> Never) {
+    let duration = submitted ? 0.4 : 0.22
+    backdrop?.targetAura = 0
+    backdrop?.targetDim = 0
+    if submitted {
+        backdrop?.kick(0.5)
+        haptic()
+    }
+    let origin = panel.frame.origin
+    glide(panel, to: NSPoint(x: origin.x, y: origin.y - (submitted ? 8 : 4)), alpha: 0, duration: duration)
+    fade(backdropWindow, to: 0, duration: duration + 0.15)
+    DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.15) {
         panel.orderOut(nil)
-        edgeWindow.orderOut(nil)
+        backdropWindow.orderOut(nil)
         action()
     }
 }
 
 model.onFinish = { values in
     guard let values else {
-        dismiss(after: 0.18) {
+        dismiss(submitted: false) {
             FileHandle.standardError.write(Data("askenv: cancelled\n".utf8))
             exit(1)
         }
         return
     }
-    ringGlow?.kick(1.2)
-    edgeGlow?.kick(0.8)
-    dismiss(after: 0.35) { deliver(values, for: request) }
+    dismiss(submitted: true) { deliver(values, for: request) }
 }
 panel.onCancel = { model.cancel() }
 
+// Escape cancels even when a text field holds the keyboard.
+NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+    guard event.keyCode == 53 else { return event }
+    model.cancel()
+    return nil
+}
+
 if let timeout = request.timeout {
     DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
-        dismiss(after: 0.2) {
+        dismiss(submitted: false) {
             FileHandle.standardError.write(Data("askenv: timed out after \(Int(timeout))s\n".utf8))
             exit(124)
         }
     }
 }
 
-// Entrance: the edges light up, then the card arrives in a swell of light.
-edgeWindow.alphaValue = 0
+// Entrance: the screen dims and the light gathers, then the card rises into it.
+backdropWindow.alphaValue = 1
 panel.alphaValue = 0
-edgeWindow.orderFrontRegardless()
+panel.setFrameOrigin(NSPoint(x: restingOrigin.x, y: restingOrigin.y - 14))
+backdropWindow.orderFrontRegardless()
 panel.makeKeyAndOrderFront(nil)
-edgeGlow?.targetIntensity = 1
-edgeGlow?.kick(1.0)
-fade(edgeWindow, to: 1, duration: 0.4)
-DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-    ringGlow?.targetIntensity = 1
-    ringGlow?.kick(1.2)
-    fade(panel, to: 1, duration: 0.3)
+backdrop?.targetDim = 1
+backdrop?.targetAura = 1
+DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+    glide(panel, to: restingOrigin, alpha: 1, duration: 0.55)
     model.shown = true
+    haptic()
 }
 
 app.run()

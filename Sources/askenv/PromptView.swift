@@ -6,16 +6,8 @@ enum Typeface {
     static func mono(_ size: CGFloat) -> Font { .custom("BerkeleyMonoVariable-Regular", size: size) }
 }
 
-/// The same colors the Metal glow cycles through.
-let glowColors: [Color] = [
-    Color(red: 0.55, green: 0.62, blue: 1.00),
-    Color(red: 0.74, green: 0.51, blue: 0.95),
-    Color(red: 0.96, green: 0.73, blue: 0.92),
-    Color(red: 1.00, green: 0.40, blue: 0.47),
-    Color(red: 1.00, green: 0.73, blue: 0.44),
-    Color(red: 0.78, green: 0.53, blue: 1.00),
-    Color(red: 0.55, green: 0.62, blue: 1.00),
-]
+/// The one accent: the indigo of the light behind the card.
+let accent = Color(red: 0.52, green: 0.50, blue: 1.0)
 
 final class PromptModel: ObservableObject {
     let request: Request
@@ -67,14 +59,15 @@ final class PromptModel: ObservableObject {
 
 struct PromptView: View {
     @ObservedObject var model: PromptModel
+    let cornerRadius: CGFloat
     @FocusState private var focused: String?
     @State private var revealed: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 10) {
-                Orb()
-                    .frame(width: 12, height: 12)
+                Beacon()
+                    .frame(width: 8, height: 8)
                 Text("Your input is required")
                     .font(Typeface.sans(13.5).weight(.medium))
                     .foregroundStyle(.white.opacity(0.92))
@@ -113,13 +106,23 @@ struct PromptView: View {
         .padding(.horizontal, 20)
         .padding(.top, 18)
         .padding(.bottom, 22)
-        .background {
-            // Escape cancels even when a text field holds the keyboard.
-            Button("", action: model.cancel)
-                .keyboardShortcut(.cancelAction)
-                .opacity(0)
-                .accessibilityHidden(true)
-        }
+        .background(
+            // Light falls from above: a faint lift at the top of the glass.
+            LinearGradient(colors: [.white.opacity(0.045), .clear], startPoint: .top, endPoint: .center)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        )
+        .overlay(
+            // A lit top edge that fades down the sides.
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [.white.opacity(0.2), .white.opacity(0.06), .white.opacity(0.03)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
+        )
         .frame(width: 420)
         .onChange(of: model.shown) { _, shown in
             if shown { focused = model.request.keys.first?.name }
@@ -176,11 +179,7 @@ struct PromptView: View {
             .padding(.leading, 12)
             .padding(.trailing, 9)
             .frame(height: 38)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(.white.opacity(isFocused ? 0.09 : 0.05))
-            )
-            .overlay(FieldBorder(active: isFocused))
+            .background(Well(active: isFocused))
             .contentShape(Rectangle())
             .onTapGesture { focused = name }
             .modifier(Shake(travel: CGFloat(model.shakes[name] ?? 0)))
@@ -202,41 +201,48 @@ struct PromptView: View {
     }
 }
 
-/// A slowly turning gradient border on the focused field.
-private struct FieldBorder: View {
+/// A field recessed into the glass: darker than the card, shaded at the top,
+/// with a faint lower lip catching the light. Focus lights it from within.
+private struct Well: View {
     let active: Bool
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
-        if active {
-            TimelineView(.animation) { context in
-                let angle = Angle.degrees(context.date.timeIntervalSinceReferenceDate * 40)
-                let gradient = AngularGradient(colors: glowColors, center: .center, angle: angle)
+        shape
+            .fill(Color.black.opacity(active ? 0.42 : 0.32))
+            .overlay(
                 shape
-                    .strokeBorder(gradient, lineWidth: 1.2)
-                    .background(shape.strokeBorder(gradient, lineWidth: 3).blur(radius: 6).opacity(0.55))
-            }
-            .transition(.opacity)
-        } else {
-            shape.strokeBorder(.white.opacity(0.08), lineWidth: 1)
-        }
+                    .stroke(Color.black.opacity(0.55), lineWidth: 2)
+                    .blur(radius: 1.5)
+                    .offset(y: 1)
+                    .clipShape(shape)
+            )
+            .overlay(
+                shape.strokeBorder(
+                    active
+                        ? AnyShapeStyle(accent.opacity(0.55))
+                        : AnyShapeStyle(LinearGradient(
+                            colors: [.black.opacity(0.3), .white.opacity(0.07)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )),
+                    lineWidth: 1
+                )
+            )
+            .shadow(color: accent.opacity(active ? 0.28 : 0), radius: 10)
     }
 }
 
-/// A small turning sphere of the glow colors.
-private struct Orb: View {
+/// A small light that breathes while the prompt waits.
+private struct Beacon: View {
     var body: some View {
         TimelineView(.animation) { context in
             let t = context.date.timeIntervalSinceReferenceDate
-            let gradient = AngularGradient(colors: glowColors, center: .center, angle: .degrees(t * 90))
-            ZStack {
-                Circle().fill(gradient).blur(radius: 5).opacity(0.8)
-                Circle().fill(gradient)
-                Circle().fill(
-                    RadialGradient(colors: [.white.opacity(0.7), .clear], center: .init(x: 0.35, y: 0.3), startRadius: 0, endRadius: 6)
-                )
-            }
-            .scaleEffect(1 + 0.08 * sin(t * 2.4))
+            let breath = 0.5 + 0.5 * sin(t * 1.6)
+            Circle()
+                .fill(accent)
+                .shadow(color: accent.opacity(0.5 + 0.4 * breath), radius: 3 + 4 * breath)
+                .opacity(0.75 + 0.25 * breath)
         }
     }
 }
