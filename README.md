@@ -4,7 +4,7 @@
 
 # query
 
-Let coding agents ask you for secrets without asking in chat.
+Let coding agents ask you for secrets without asking in chat. [query.vogel.dev](https://query.vogel.dev)
 
 An agent runs `query` with the names of the values it needs. A floating prompt
 appears over whatever you are doing, you type or paste the values, and they go
