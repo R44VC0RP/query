@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/header.png" alt="query: a coding agent calls query, a floating prompt on the person's display collects the values, and they go to a command, a dotenv file or stdout" width="820">
+  <img src="docs/header-dark.png" alt="query: a coding agent calls query, a floating prompt on the person's display collects the values, and they go to a command, a dotenv file or stdout" width="820">
 </p>
 
 # query
