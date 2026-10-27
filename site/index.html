@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>query: let agents ask you for secrets, not in chat</title>
+<meta name="description" content="query opens a floating prompt on your Mac when a coding agent needs an API key or other secret. The values go straight to the command, never into the chat.">
+<meta name="color-scheme" content="dark">
+<style>
+  :root {
+    --bg: #0b0b0d;
+    --text: rgba(255, 255, 255, 0.92);
+    --muted: rgba(255, 255, 255, 0.56);
+    --faint: rgba(255, 255, 255, 0.36);
+    --accent: rgb(133, 128, 255);
+    --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --mono: "Berkeley Mono", "BerkeleyMonoVariable-Regular", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* The light behind the card, drawn in WebGL, plus a static vignette. */
+  #light { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+  .vignette {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 35%, transparent 40%, rgba(0, 0, 0, 0.55) 100%);
+  }
+
+  main {
+    position: relative; z-index: 1;
+    max-width: 672px;
+    margin: 0 auto;
+    padding: 72px 24px 64px;
+  }
+
+  .brand { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 15px; }
+  .beacon {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+    animation: breathe 3.9s ease-in-out infinite;
+  }
+  @keyframes breathe {
+    50% { box-shadow: 0 0 2px rgba(133, 128, 255, 0.6); opacity: 0.8; }
+  }
+
+  h1 {
+    margin: 56px 0 14px;
+    font-size: 30px;
+    line-height: 1.2;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+  .lede { margin: 0; color: var(--muted); font-size: 17px; text-wrap: pretty; }
+
+  /* The card: dark glass with a lit top edge, as in the app. */
+  .card {
+    position: relative;
+    margin-top: 44px;
+    padding: 20px;
+    border-radius: 22px;
+    background:
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.045), transparent 50%),
+      rgba(10, 10, 16, 0.72);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    backdrop-filter: blur(24px) saturate(1.4);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  }
+  .card::after {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+    padding: 1px;
+    background: linear-gradient(to bottom, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.03));
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+  .label { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: 0 0 7px; }
+  .label + .well { margin-bottom: 0; }
+  .card .row + .row { margin-top: 16px; }
+
+  /* A recessed field, like the app's inputs. */
+  .well {
+    display: flex; align-items: center; gap: 8px;
+    min-height: 44px;
+    padding: 0 6px 0 14px;
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.36);
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+    border: 1px solid transparent;
+    transition: border-color 0.2s ease-out, box-shadow 0.2s ease-out;
+  }
+  .well:hover { border-color: rgba(133, 128, 255, 0.35); }
+  .well code {
+    flex: 1; min-width: 0;
+    font-family: var(--mono); font-size: 13.5px;
+    white-space: nowrap; overflow-x: auto; scrollbar-width: none;
+    /* A long command fades out at the edge instead of being cut. */
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+  .well code::-webkit-scrollbar { display: none; }
+  .prompt { color: var(--faint); user-select: none; }
+
+  .copy {
+    flex: none;
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 32px; padding: 0 12px;
+    border: 0; border-radius: 7px;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text);
+    font: 500 13px var(--sans);
+    cursor: pointer;
+    transition: background-color 0.15s ease-out, transform 0.1s ease-out;
+  }
+  .copy:hover { background: rgba(255, 255, 255, 0.16); }
+  .copy:active { transform: scale(0.97); }
+  .copy:focus-visible { outline: 1.5px solid var(--accent); outline-offset: 2px; }
+  .copy svg { width: 14px; height: 14px; }
+  .copy .done { display: none; }
+  .copy.copied .done { display: block; color: var(--accent); }
+  .copy.copied .idle { display: none; }
+
+  .meta { margin: 14px 2px 0; font-size: 13px; color: var(--faint); }
+
+  h2 { margin: 72px 0 18px; font-size: 19px; font-weight: 500; }
+
+  ol.steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+  ol.steps li {
+    counter-increment: step;
+    display: grid; grid-template-columns: 28px 1fr;
+    padding: 12px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    color: var(--muted);
+  }
+  ol.steps li::before { content: counter(step); font-family: var(--mono); font-size: 13px; color: var(--faint); padding-top: 2px; }
+  ol.steps strong { color: var(--text); font-weight: 500; }
+
+  .commands { display: grid; gap: 0; }
+  .command {
+    display: grid; grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+    padding: 14px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+  }
+  .command code { font-family: var(--mono); font-size: 13.5px; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+  .command code::-webkit-scrollbar { display: none; }
+  .command p { margin: 0; color: var(--muted); font-size: 15px; }
+  .key { color: var(--accent); }
+
+  p.body { color: var(--muted); margin: 0 0 16px; }
+
+  footer {
+    display: flex; gap: 20px;
+    margin-top: 80px; padding-top: 18px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    font-size: 13px; color: var(--faint);
+  }
+  a { color: var(--text); text-decoration: none; }
+  a:hover { color: var(--accent); }
+  footer a { color: var(--muted); }
+
+  @media (max-width: 520px) {
+    main { padding-top: 48px; }
+    h1 { margin-top: 40px; font-size: 26px; }
+    .copy .text { display: none; }
+    .copy { padding: 0 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .beacon { animation: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="light" aria-hidden="true"></canvas>
+<div class="vignette" aria-hidden="true"></div>
+
+<main>
+  <div class="brand"><span class="beacon" aria-hidden="true"></span>query</div>
+
+  <h1>Let coding agents ask you for secrets without asking in chat.</h1>
+  <p class="lede">When an agent needs an API key, <code style="font-family:var(--mono);font-size:15px">query</code> opens a floating prompt on your Mac. You type the value, and it goes straight to the command. It never lands in the transcript, and the agent never sees it.</p>
+
+  <div class="card" id="card">
+    <div class="row">
+      <p class="label">Install</p>
+      <div class="well">
+        <code><span class="prompt">$ </span><span data-copy>curl -fsSL https://raw.githubusercontent.com/R44VC0RP/query/main/install.sh | sh</span></code>
+        <button class="copy" type="button" aria-label="Copy install command">
+          <svg class="idle" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.75"/><path d="M10.75 5.25V3.5a1.75 1.75 0 0 0-1.75-1.75H3.5A1.75 1.75 0 0 0 1.75 3.5V9c0 .97.78 1.75 1.75 1.75h1.75"/></svg>
+          <svg class="done" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg>
+          <span class="text">Copy</span>
+        </button>
+      </div>
+    </div>
+    <div class="row">
+      <p class="label">Agent skill</p>
+      <div class="well">
+        <code><span class="prompt">$ </span><span data-copy>npx skills add R44VC0RP/query</span></code>
+        <button class="copy" type="button" aria-label="Copy skill install command">
+          <svg class="idle" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.25" y="5.25" width="8" height="8" rx="1.75"/><path d="M10.75 5.25V3.5a1.75 1.75 0 0 0-1.75-1.75H3.5A1.75 1.75 0 0 0 1.75 3.5V9c0 .97.78 1.75 1.75 1.75h1.75"/></svg>
+          <svg class="done" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5"/></svg>
+          <span class="text">Copy</span>
+        </button>
+      </div>
+    </div>
+  </div>
+  <p class="meta">macOS 14 or later, Apple silicon and Intel. No permissions needed.</p>
+
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li><span><strong>The agent asks by name.</strong> It runs <code style="font-family:var(--mono);font-size:14px">query run OPENAI_API_KEY -- npm test</code> instead of asking you to paste a key.</span></li>
+    <li><span><strong>A prompt floats over your screen.</strong> It shows only the key names. Type or paste the values and press Return, or Esc to say no.</span></li>
+    <li><span><strong>The values go where they're needed.</strong> The command gets them as environment variables, and the agent gets only its output.</span></li>
+  </ol>
+
+  <h2>Three ways to deliver</h2>
+  <div class="commands">
+    <div class="command">
+      <code>query run <span class="key">KEY</span> -- npm test</code>
+      <p>Runs the command with the values in its environment. The agent never sees them.</p>
+    </div>
+    <div class="command">
+      <code>query write .env.local <span class="key">KEY</span></code>
+      <p>Merges the values into a dotenv file, readable only by you.</p>
+    </div>
+    <div class="command">
+      <code>query get <span class="key">KEY</span></code>
+      <p>Prints the values for the agent to read. For settings that aren't secret.</p>
+    </div>
+  </div>
+
+  <footer>
+    <a href="https://github.com/R44VC0RP/query">GitHub</a>
+    <a href="https://github.com/R44VC0RP/query/releases">Releases</a>
+    <span>MIT license</span>
+  </footer>
+</main>
+
+<script>
+  // Copy buttons.
+  for (const button of document.querySelectorAll('.copy')) {
+    button.addEventListener('click', async () => {
+      const text = button.parentElement.querySelector('[data-copy]').textContent
+      try {
+        await navigator.clipboard.writeText(text)
+      } catch {
+        const range = document.createRange()
+        range.selectNodeContents(button.parentElement.querySelector('[data-copy]'))
+        getSelection().removeAllRanges()
+        getSelection().addRange(range)
+        document.execCommand('copy')
+      }
+      button.classList.add('copied')
+      button.querySelector('.text').textContent = 'Copied'
+      window.swell?.()
+      clearTimeout(button.timer)
+      button.timer = setTimeout(() => {
+        button.classList.remove('copied')
+        button.querySelector('.text').textContent = 'Copy'
+      }, 1600)
+    })
+  }
+
+  // The light behind the card: the app's Metal shader, ported to WebGL.
+  ;(() => {
+    const canvas = document.getElementById('light')
+    const gl = canvas.getContext('webgl', { premultipliedAlpha: true, alpha: true })
+    if (!gl) return
+    const vertex = `attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }`
+    const fragment = `
+      precision highp float;
+      uniform vec2 size;      // pixels
+      uniform vec2 center;    // card center, pixels, origin top-left
+      uniform vec2 halfSize;  // pixels
+      uniform float radius;
+      uniform float scale;    // pixels per CSS pixel
+      uniform float time;
+      uniform float aura;
+      uniform float burst;
+      uniform float scroll;   // CSS pixels
+
+      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float noise(vec2 p) {
+        vec2 i = floor(p), f = fract(p), u = f * f * (3.0 - 2.0 * f);
+        return mix(mix(hash(i), hash(i + vec2(1, 0)), u.x), mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), u.x), u.y);
+      }
+      float fbm(vec2 p) {
+        float v = 0.0, a = 0.5;
+        for (int i = 0; i < 4; i++) { v += a * noise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; }
+        return v;
+      }
+      float sdRoundRect(vec2 p, vec2 b, float r) {
+        vec2 q = abs(p) - b + r;
+        return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+      }
+      void main() {
+        vec2 p = vec2(gl_FragCoord.x, size.y - gl_FragCoord.y);
+        vec2 pt = p / scale;
+        float t = time;
+        float d = max(sdRoundRect(p - center, halfSize, radius), 0.0) / scale;
+
+        vec2 q = (pt + vec2(0.0, scroll)) / 110.0;
+        vec2 warp = vec2(fbm(q + vec2(0.0, t * 0.04)), fbm(q + vec2(5.2, -t * 0.03)));
+        float n = fbm(q * 1.3 + warp * 1.6 + vec2(t * 0.015, -t * 0.03));
+
+        float spread = 90.0 * (0.8 + 0.4 * n) * (1.0 + burst * 0.5);
+        float light = exp(-d / spread) * (0.55 + 0.45 * n);
+        float core = exp(-d / 10.0) * 0.35;
+        float la = clamp((light * 0.42 + core) * aura * (1.0 + burst * 0.6), 0.0, 0.85);
+
+        vec3 deep = vec3(0.16, 0.18, 0.62);
+        vec3 body = vec3(0.47, 0.30, 0.92);
+        vec3 highlight = vec3(0.90, 0.52, 0.78);
+        vec3 color = mix(deep, body, smoothstep(0.35, 0.7, n));
+        color = mix(color, highlight, 0.18 * smoothstep(0.62, 0.85, n));
+        float grain = (hash(p + fract(t) * 91.0) - 0.5) / 255.0;
+        gl_FragColor = vec4(max(color * la + grain * la, 0.0), la);
+      }`
+
+    const compile = (type, source) => {
+      const shader = gl.createShader(type)
+      gl.shaderSource(shader, source)
+      gl.compileShader(shader)
+      return shader
+    }
+    const program = gl.createProgram()
+    gl.attachShader(program, compile(gl.VERTEX_SHADER, vertex))
+    gl.attachShader(program, compile(gl.FRAGMENT_SHADER, fragment))
+    gl.linkProgram(program)
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return
+    gl.useProgram(program)
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer())
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW)
+    const position = gl.getAttribLocation(program, 'p')
+    gl.enableVertexAttribArray(position)
+    gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0)
+
+    const u = {}
+    for (const name of ['size', 'center', 'halfSize', 'radius', 'scale', 'time', 'aura', 'burst', 'scroll']) {
+      u[name] = gl.getUniformLocation(program, name)
+    }
+
+    const card = document.getElementById('card')
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches
+    // Everything is soft, so a reduced resolution is invisible and cheap.
+    const scale = Math.min(devicePixelRatio, 1)
+    let aura = 0, burst = 0, last = performance.now()
+    const start = last
+    window.swell = () => { burst = Math.min(burst + 0.5, 1.2) }
+
+    const resize = () => {
+      canvas.width = Math.round(innerWidth * scale)
+      canvas.height = Math.round(innerHeight * scale)
+      gl.viewport(0, 0, canvas.width, canvas.height)
+    }
+    addEventListener('resize', resize)
+    resize()
+
+    const frame = now => {
+      const dt = Math.min((now - last) / 1000, 0.1)
+      last = now
+      aura += (1 - aura) * (1 - Math.exp(-dt * 2.5))
+      burst *= Math.exp(-dt * 2)
+      if (still) { aura = 1; burst = 0 }
+
+      const r = card.getBoundingClientRect()
+      gl.clearColor(0, 0, 0, 0)
+      gl.clear(gl.COLOR_BUFFER_BIT)
+      gl.uniform2f(u.size, canvas.width, canvas.height)
+      gl.uniform2f(u.center, (r.left + r.width / 2) * scale, (r.top + r.height / 2) * scale)
+      gl.uniform2f(u.halfSize, (r.width / 2) * scale, (r.height / 2) * scale)
+      gl.uniform1f(u.radius, 22 * scale)
+      gl.uniform1f(u.scale, scale)
+      gl.uniform1f(u.time, still ? 8 : (now - start) / 1000)
+      gl.uniform1f(u.aura, aura)
+      gl.uniform1f(u.burst, burst)
+      gl.uniform1f(u.scroll, scrollY)
+      gl.drawArrays(gl.TRIANGLES, 0, 3)
+      if (!still || aura < 0.999) requestAnimationFrame(frame)
+    }
+    requestAnimationFrame(frame)
+    if (still) addEventListener('scroll', () => requestAnimationFrame(frame), { passive: true })
+  })()
+</script>
+</body>
+</html>
