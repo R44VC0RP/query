@@ -17,13 +17,18 @@ query run OPENAI_API_KEY STRIPE_SECRET_KEY -- npm test
 
 ## Install
 
-Requires macOS 14 or later and Swift 5.10 or later (Xcode 15.3+).
+```sh
+curl -fsSL https://raw.githubusercontent.com/R44VC0RP/query/main/install.sh | sh
+```
+
+This installs a universal binary (Apple silicon and Intel, macOS 14 or later)
+to `~/.local/bin`. Set `QUERY_INSTALL_DIR` to put it somewhere else.
+
+To build from source instead (Swift 5.10 or later):
 
 ```sh
-git clone https://github.com/R44VC0RP/query.git
-cd query
-swift build -c release
-cp .build/release/query ~/.local/bin/   # or anywhere on your PATH
+git clone https://github.com/R44VC0RP/query.git && cd query
+swift build -c release && cp .build/release/query ~/.local/bin/
 ```
 
 ## Usage
@@ -61,11 +66,10 @@ field is filled. Esc cancels. Drag the card anywhere to move it.
 
 `skills/query/SKILL.md` teaches agents when and how to use `query`: `run` by
 default, `write` only into git-ignored files, `get` only for values that are not
-secret. Link it into your agent's skills folder:
+secret. Install it for your agents:
 
 ```sh
-ln -s "$PWD/skills/query" ~/.config/opencode/skills/query   # OpenCode
-ln -s "$PWD/skills/query" ~/.claude/skills/query            # Claude Code
+npx skills add R44VC0RP/query
 ```
 
 ## Permissions and limits
@@ -77,8 +81,9 @@ monitoring. It only draws a window and reads what you type into it.
   in containers.
 - macOS asks the app running the agent, not `query`, for access when
   `query write` targets Desktop, Documents or Downloads.
-- Builds from source run without warnings. A binary copied to another Mac must
-  be signed and notarized first.
+- The release binary is not notarized. The install script downloads it with
+  `curl`, which macOS does not quarantine, so it runs without a warning. A copy
+  downloaded in a browser is blocked by Gatekeeper.
 
 ## License
 
