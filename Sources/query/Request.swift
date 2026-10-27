@@ -44,7 +44,7 @@ A KEY may carry a hint after a colon:
   query run "STRIPE_KEY:Restricted key, test mode" -- npm test
 
 Options:
-  --reason TEXT       Why the values are needed, shown in the window
+  --reason TEXT       Why the values are needed, shown on hover
   --timeout SECONDS   Give up with exit status 124 if nobody answers
   --color COLOR       Color of the light: indigo, ember, jade, ocean, rose,
                       gold, mono, or a hex color such as #ff6a3d.
